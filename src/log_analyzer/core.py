@@ -30,7 +30,7 @@ def parse_log_line(line: str) -> Optional[Dict]:
 
 def analyze_levels(file_path: Path) -> Dict[str, int]:
     """Count log entries by level."""
-    counts = Counter(level: 0 for level in LOG_LEVELS)
+    counts = Counter({level: 0 for level in LOG_LEVELS})
 
     with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
         for line in f:
