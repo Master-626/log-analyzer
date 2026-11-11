@@ -2,28 +2,43 @@
 CLI interface for log-analyzer.
 """
 
-import click
 from pathlib import Path
+
+import click
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
-from .core import analyze_levels, search_keyword, filter_by_level, extract_exceptions
+from . import __version__
+from .core import (
+    analyze_levels,
+    extract_exceptions,
+    filter_by_level,
+    normalize_level,
+    search_keyword,
+)
 
 console = Console()
 
+LOG_FILE = click.Path(exists=True, dir_okay=False, path_type=Path)
+
+
+def _print_record(line: str) -> None:
+    """Print a log line without interpreting ``[brackets]`` as Rich markup."""
+    console.print(line, markup=False)
+
 
 @click.group()
-@click.version_option()
+@click.version_option(version=__version__)
 def main():
     """Log Analyzer - Smart log file analysis tool."""
-    pass
 
 
 @main.command()
-@click.argument("file", type=click.Path(exists=True, path_type=Path))
+@click.argument("file", type=LOG_FILE)
 def stats(file: Path):
     """Show log level statistics."""
-    console.print(f"\n[bold blue]📊 Log Statistics: {file}[/bold blue]\n")
+    console.print(f"\n[bold blue]📊 Log Statistics: {escape(str(file))}[/bold blue]\n")
 
     counts = analyze_levels(file)
 
@@ -41,38 +56,50 @@ def stats(file: Path):
 
 
 @main.command()
-@click.argument("file", type=click.Path(exists=True, path_type=Path))
+@click.argument("file", type=LOG_FILE)
 @click.option("--keyword", "-k", required=True, help="Keyword to search")
 @click.option("--case-sensitive", "-c", is_flag=True, help="Case sensitive search")
 def search(file: Path, keyword: str, case_sensitive: bool):
     """Search for keyword in log file."""
-    console.print(f"\n[bold blue]🔍 Searching for: {keyword}[/bold blue]\n")
+    try:
+        results = search_keyword(file, keyword, case_sensitive)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc), param_hint="--keyword") from exc
 
-    results = search_keyword(file, keyword, case_sensitive)
+    console.print(f"\n[bold blue]🔍 Searching for: {escape(keyword)}[/bold blue]\n")
 
     if results:
         console.print(f"Found [bold green]{len(results)}[/bold green] matches:\n")
         for line in results[:20]:  # Show first 20
-            console.print(line)
+            _print_record(line)
         if len(results) > 20:
             console.print(f"\n... and {len(results) - 20} more")
     else:
         console.print("[yellow]No matches found.[/yellow]")
 
 
-@main.command()
-@click.argument("file", type=click.Path(exists=True, path_type=Path))
-@click.option("--level", "-l", default="ERROR", help="Minimum level (DEBUG, INFO, WARNING, ERROR, CRITICAL)")
-def filter(file: Path, level: str):
+@main.command("filter")
+@click.argument("file", type=LOG_FILE)
+@click.option(
+    "--level",
+    "-l",
+    default="ERROR",
+    help="Minimum level: DEBUG, INFO, WARNING, ERROR, CRITICAL (aliases: WARN, FATAL)",
+)
+def filter_logs(file: Path, level: str):
     """Filter log entries by level."""
-    console.print(f"\n[bold blue]🔍 Filtering by level: {level.upper()}+[/bold blue]\n")
+    try:
+        normalized = normalize_level(level)
+        results = filter_by_level(file, normalized)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc), param_hint="--level") from exc
 
-    results = filter_by_level(file, level)
+    console.print(f"\n[bold blue]🔍 Filtering by level: {escape(normalized)}+[/bold blue]\n")
 
     if results:
         console.print(f"Found [bold red]{len(results)}[/bold red] entries:\n")
         for line in results[:20]:
-            console.print(line)
+            _print_record(line)
         if len(results) > 20:
             console.print(f"\n... and {len(results) - 20} more")
     else:
@@ -80,21 +107,21 @@ def filter(file: Path, level: str):
 
 
 @main.command()
-@click.argument("file", type=click.Path(exists=True, path_type=Path))
+@click.argument("file", type=LOG_FILE)
 def exceptions(file: Path):
     """Extract exception tracebacks."""
-    console.print(f"\n[bold blue]🔥 Extracting exceptions...[/bold blue]\n")
+    console.print("\n[bold blue]🔥 Extracting exceptions...[/bold blue]\n")
 
-    exceptions = extract_exceptions(file)
+    found = extract_exceptions(file)
 
-    if exceptions:
-        console.print(f"Found [bold red]{len(exceptions)}[/bold red] exceptions:\n")
-        for i, exc in enumerate(exceptions[:5], 1):
-            console.print(f"[bold]Exception #{i}:[/bold]")
-            console.print(exc)
+    if found:
+        console.print(f"Found [bold red]{len(found)}[/bold red] exceptions:\n")
+        for index, exc in enumerate(found[:5], 1):
+            console.print(f"[bold]Exception #{index}:[/bold]")
+            _print_record(exc)
             console.print("")
-        if len(exceptions) > 5:
-            console.print(f"... and {len(exceptions) - 5} more exceptions")
+        if len(found) > 5:
+            console.print(f"... and {len(found) - 5} more exceptions")
     else:
         console.print("[green]No exceptions found. Great![/green]")
 
